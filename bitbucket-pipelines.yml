@@ -1,0 +1,63 @@
+image: openjdk:8
+
+.gcloud_auth: &gcloudAuth |
+  gcloud config set project $GCLOUD_PROJECT
+  echo $GCLOUD_API_KEYFILE | base64 -d > gcloud-api-key.json
+  gcloud auth activate-service-account --key-file gcloud-api-key.json
+  export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/gcloud-api-key.json"
+  gcloud auth configure-docker --quiet
+  rm ~/.gcloud-api-key.json
+
+definitions:
+  steps:
+    - step: &test
+        name: Test
+        caches:
+          - gradle
+        script:
+          - ./gradlew test
+    - step: &build
+        name: Build Docker image
+        caches:
+          - gradle
+          - docker
+        script:
+          - ./gradlew build
+          - export IMAGE_NAME=eu.gcr.io/$GCLOUD_PROJECT/$BITBUCKET_REPO_SLUG:$BITBUCKET_COMMIT
+          - docker build -t $IMAGE_NAME .
+          - docker save --output ggl-cart.docker $IMAGE_NAME
+        artifacts:
+          - ggl-cart.docker
+    - step: &push
+        image: google/cloud-sdk:latest
+        name: Push to registry
+        caches:
+          - docker
+        services:
+          - docker
+        script:
+          - export IMAGE_NAME=eu.gcr.io/$GCLOUD_PROJECT/$BITBUCKET_REPO_SLUG:$BITBUCKET_COMMIT
+          - docker load --input ggl-cart.docker
+          - *gcloudAuth
+          - docker push $IMAGE_NAME
+    - step: &deploy
+        name: Deploy to cluster
+        image: google/cloud-sdk:latest
+        deployment: test
+        script:
+          - export IMAGE_NAME=eu.gcr.io/$GCLOUD_PROJECT/$BITBUCKET_REPO_SLUG:$BITBUCKET_COMMIT
+          - *gcloudAuth
+          - gcloud container clusters get-credentials $K8S_CLUSTER --region=$GCLOUD_REGION
+          - cat deployment.yaml | sed "s~{{IMAGE_NAME}}~$IMAGE_NAME~g" | kubectl apply -f -
+          - kubectl apply -f service.yaml
+
+pipelines:
+
+  default:
+    - step: *test
+
+  branches:
+    master:
+      - step: *build
+      - step: *push
+      - step: *deploy

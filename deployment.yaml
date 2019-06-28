@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ggl-cart
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ggl-cart
+  template:
+    metadata:
+      labels:
+        app: ggl-cart
+    spec:
+      containers:
+        - name: ggl-cart
+          image: {{IMAGE_NAME}}
+          ports:
+            - containerPort: 8080
